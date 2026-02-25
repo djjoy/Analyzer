@@ -385,14 +385,17 @@ var
   k, l: Integer;
   rcfmat_idx: Integer;
   j: Integer;
+  df_filt: TDoubleVector;
 begin
   if Length(df) = 0 then Exit;
   
   { Initialize weighting vector }
   SetLength(wv, WV_LEN);
   
-  { Calculate rayparam }
-  rayparam := (60.0 * 44100.0 / 512.0) / inputtempo;
+  { Calculate rayparam using the actual sample rate and DF hop size so that
+    the Rayleigh prior is centred on the correct beat-period bin regardless
+    of the file's sample rate. }
+  rayparam := (60.0 * m_rate / m_increment) / inputtempo;
   
   { Create weighting vector }
   if constraintempo then
@@ -411,6 +414,13 @@ begin
   winlen := 512;
   hopsize := 128;
   df_len := Length(df);
+  
+  { Apply zero-phase low-pass filter to a local copy for the RCF/autocorrelation
+    analysis. Using a filtered copy keeps the beat-period estimation robust
+    against high-frequency noise in the detection function without affecting
+    the df passed in by the caller (used as-is by CalculateBeats). }
+  df_filt := Copy(df);
+  FilterDF(df_filt);
   
   { Create rcf matrix }
   SetLength(rcfmat, (df_len div hopsize) + 2);
@@ -439,9 +449,9 @@ begin
       FillChar(dfframe[l], (winlen - l) * SizeOf(Double), 0);
     end;
     
-    { Copy data }
+    { Copy data from zero-phase-filtered df }
     if l > k then
-      Move(df[i + k], dfframe[k], (l - k) * SizeOf(Double));
+      Move(df_filt[i + k], dfframe[k], (l - k) * SizeOf(Double));
     
     { Clear rcf }
     for j := 0 to WV_LEN - 1 do
@@ -470,6 +480,7 @@ begin
   SetLength(dfframe, 0);
   SetLength(rcf, 0);
   SetLength(rcfmat, 0);
+  SetLength(df_filt, 0);
 end;
 
 procedure TTempoTrackV2.CalculateBeats(const df: TDoubleVector; const beat_period: TIntVector; 

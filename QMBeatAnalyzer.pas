@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Generics.Collections, System.Math,
-  DetectionFunction, TempoTrackV2;
+  DetectionFunction, TempoTrackV2, DFProcess;
 
 type
   TQMBeatAnalyzer = class
@@ -186,6 +186,11 @@ begin
   SetLength(df, nonZeroCount - 2);
   for i := 2 to nonZeroCount - 1 do
     df[i - 2] := m_detectionResults[i];
+  
+  { Apply signal conditioning (DFProcess from qm-dsp signalconditioning/):
+    LP filter to remove high-frequency noise, then adaptive mean subtraction
+    to normalise onset peaks across quiet and loud sections of the track. }
+  TDFProcess.Process(df);
   
   { Calculate beat period }
   SetLength(beatPeriod, 0);
