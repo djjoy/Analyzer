@@ -154,14 +154,57 @@ begin
 end;
 
 procedure kiss_fft(cfg: kiss_fft_cfg; const fin: Tkiss_fft_cpx_array; var fout: Tkiss_fft_cpx_array);
+var
+  n, i, j, k, stage, half, ts: Integer;
+  t: kiss_fft_cpx;
+  bits, rev: Integer;
 begin
-  SetLength(fout, cfg.nfft);
-  
-  // Copiar entrada a salida
-  Move(fin[0], fout[0], cfg.nfft * SizeOf(kiss_fft_cpx));
-  
-  // Aplicar factors (versión simplificada)
-  kf_work(fout, fin, 1, 1, cfg.factors, cfg);
+  n := cfg.nfft;
+  SetLength(fout, n);
+
+  { n must be a power of 2 (guaranteed by QMBeatAnalyzer which clamps
+    m_windowSize to 512..8192 via successive doublings). }
+
+  { Compute log2(n) for bit-reversal }
+  bits := 0;
+  i := n;
+  while i > 1 do begin i := i shr 1; Inc(bits); end;
+
+  { Bit-reverse permutation: fout[i] = fin[bit_reverse(i)] }
+  for i := 0 to n - 1 do
+  begin
+    rev := 0;
+    j := i;
+    for k := 0 to bits - 1 do
+    begin
+      rev := (rev shl 1) or (j and 1);
+      j := j shr 1;
+    end;
+    fout[i] := fin[rev];
+  end;
+
+  { Iterative Cooley-Tukey butterfly stages: stage = 2, 4, 8, ..., n }
+  stage := 2;
+  while stage <= n do
+  begin
+    half := stage shr 1;
+    ts := n div stage; { twiddles[j*ts] = W_n^(j*n/stage) = W_stage^j }
+    k := 0;
+    while k < n do
+    begin
+      for j := 0 to half - 1 do
+      begin
+        t.r := fout[k+j+half].r * cfg.twiddles[j*ts].r - fout[k+j+half].i * cfg.twiddles[j*ts].i;
+        t.i := fout[k+j+half].r * cfg.twiddles[j*ts].i + fout[k+j+half].i * cfg.twiddles[j*ts].r;
+        fout[k+j+half].r := fout[k+j].r - t.r;
+        fout[k+j+half].i := fout[k+j].i - t.i;
+        fout[k+j].r := fout[k+j].r + t.r;
+        fout[k+j].i := fout[k+j].i + t.i;
+      end;
+      Inc(k, stage);
+    end;
+    stage := stage shl 1;
+  end;
 end;
 
 function kiss_fftr_alloc(nfft: Integer; inverse_fft: Boolean): kiss_fftr_cfg;

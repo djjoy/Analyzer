@@ -3,7 +3,7 @@ unit DetectionFunction;
 interface
 
 uses
-  System.SysUtils, System.Math, System.Generics.Collections, KissFFT;
+  System.SysUtils, System.Math, System.Generics.Collections, KissFFT, FMathUtilities;
 
 const
   DF_HFC = 1;
@@ -167,13 +167,20 @@ var
   i: Integer;
   real_part, imag_part: Double;
   sd: Double;
+  predictedPhase: Double;
 begin
   sd := 0;
   
   for i := 0 to m_halfLength - 1 do
   begin
-    real_part := m_magnitude[i] * Cos(m_phase[i]) - m_magHistory[i] * Cos(m_phaseHistory[i]);
-    imag_part := m_magnitude[i] * Sin(m_phase[i]) - m_magHistory[i] * Sin(m_phaseHistory[i]);
+    { Phase prediction: 2nd-order linear extrapolation wrapped to [-pi, pi].
+      Stationary tones have predictable phase progression and contribute near
+      zero; sudden changes (onsets) produce large deviations. }
+    predictedPhase := MathUtilities.PrincArg(
+      2.0 * m_phaseHistory[i] - m_phaseHistoryOld[i]);
+
+    real_part := m_magnitude[i] * Cos(m_phase[i]) - m_magHistory[i] * Cos(predictedPhase);
+    imag_part := m_magnitude[i] * Sin(m_phase[i]) - m_magHistory[i] * Sin(predictedPhase);
     
     sd := sd + Sqrt(real_part * real_part + imag_part * imag_part);
     
