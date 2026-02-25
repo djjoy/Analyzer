@@ -6,7 +6,7 @@ uses
   System.SysUtils, System.Math;
 
 type
-  kiss_fft_scalar = Single;
+  kiss_fft_scalar = Double;
   
   kiss_fft_cpx = record
     r: kiss_fft_scalar;
