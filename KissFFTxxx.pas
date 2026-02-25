@@ -1,0 +1,560 @@
+﻿unit KissFFT;
+
+interface
+
+uses
+  System.SysUtils, System.Math, System.Generics.Collections;
+
+type
+  kiss_fft_scalar = Single;
+  
+  kiss_fft_cpx = record
+    r: kiss_fft_scalar;
+    i: kiss_fft_scalar;
+  end;
+  Pkiss_fft_cpx = ^kiss_fft_cpx;
+  Tkiss_fft_cpx_array = TArray<kiss_fft_cpx>;
+
+  kiss_fft_cfg = record
+    nfft: Integer;
+    inverse: Boolean;
+    factors: TArray<Integer>;
+    twiddles: Tkiss_fft_cpx_array;
+  end;
+
+  kiss_fftr_cfg = record
+    substate: kiss_fft_cfg;
+    tmpbuf: Tkiss_fft_cpx_array;
+    super_twiddles: Tkiss_fft_cpx_array;
+  end;
+
+function kiss_fft_alloc(nfft: Integer; inverse_fft: Boolean): kiss_fft_cfg;
+procedure kiss_fft(cfg: kiss_fft_cfg; const fin: Tkiss_fft_cpx_array; var fout: Tkiss_fft_cpx_array);
+function kiss_fftr_alloc(nfft: Integer; inverse_fft: Boolean): kiss_fftr_cfg;
+procedure kiss_fftr(var cfg: kiss_fftr_cfg; const timedata: TArray<kiss_fft_scalar>; var freqdata: Tkiss_fft_cpx_array);
+procedure kiss_fftri(var cfg: kiss_fftr_cfg; const freqdata: Tkiss_fft_cpx_array; var timedata: TArray<kiss_fft_scalar>);
+
+implementation
+
+// Macros helper functions
+procedure C_MUL(var res: kiss_fft_cpx; const a, b: kiss_fft_cpx); inline;
+begin
+  res.r := a.r * b.r - a.i * b.i;
+  res.i := a.r * b.i + a.i * b.r;
+end;
+
+procedure C_MULBYSCALAR(var c: kiss_fft_cpx; s: kiss_fft_scalar); inline;
+begin
+  c.r := c.r * s;
+  c.i := c.i * s;
+end;
+
+procedure C_SUB(var res: kiss_fft_cpx; const a, b: kiss_fft_cpx); inline;
+begin
+  res.r := a.r - b.r;
+  res.i := a.i - b.i;
+end;
+
+procedure C_ADDTO(var res: kiss_fft_cpx; const a: kiss_fft_cpx); inline;
+begin
+  res.r := res.r + a.r;
+  res.i := res.i + a.i;
+end;
+
+procedure C_ADD(var res: kiss_fft_cpx; const a, b: kiss_fft_cpx); inline;
+begin
+  res.r := a.r + b.r;
+  res.i := a.i + b.i;
+end;
+
+procedure C_SUBFROM(var res: kiss_fft_cpx; const a: kiss_fft_cpx); inline;
+begin
+  res.r := res.r - a.r;
+  res.i := res.i - a.i;
+end;
+
+procedure kf_cexp(var x: kiss_fft_cpx; phase: Double); inline;
+begin
+  x.r := Cos(phase);
+  x.i := Sin(phase);
+end;
+
+{ Butterfly radix-2 }
+procedure kf_bfly2(var Fout: Tkiss_fft_cpx_array; fstride: Integer; 
+  const st: kiss_fft_cfg; m: Integer);
+var
+  Fout2: Integer;
+  t: kiss_fft_cpx;
+  i: Integer;
+begin
+  for i := 0 to m - 1 do
+  begin
+    Fout2 := i + m;
+    C_MUL(t, Fout[Fout2], st.twiddles[i * fstride]);
+    C_SUB(Fout[Fout2], Fout[i], t);
+    C_ADDTO(Fout[i], t);
+  end;
+end;
+
+{ Butterfly radix-3 }
+procedure kf_bfly3(var Fout: Tkiss_fft_cpx_array; fstride: Integer;
+  const st: kiss_fft_cfg; m: Integer);
+var
+  k: Integer;
+  Fout0, Fout1, Fout2: Integer;
+  scratch: array[0..2] of kiss_fft_cpx;
+  twidx: Integer;
+  epi3: kiss_fft_cpx;
+begin
+  epi3.r := Cos(2.0 * PI / 3.0);
+  epi3.i := Sin(2.0 * PI / 3.0);
+
+  for k := 0 to m - 1 do
+  begin
+    Fout0 := k;
+    Fout1 := k + m;
+    Fout2 := k + 2 * m;
+
+    scratch[1] := Fout[Fout1];
+    scratch[2] := Fout[Fout2];
+
+    C_MUL(scratch[1], scratch[1], st.twiddles[fstride * Fout1]);
+    C_MUL(scratch[2], scratch[2], st.twiddles[fstride * 2 * Fout2]);
+
+    scratch[0] := Fout[Fout0];
+
+    C_SUB(Fout[Fout0], scratch[0], scratch[1]);
+    C_ADDTO(Fout[Fout0], scratch[2]);
+
+    scratch[0].r := scratch[0].r + 0.5 * (scratch[1].r + scratch[2].r);
+    scratch[0].i := scratch[0].i + 0.5 * (scratch[1].i + scratch[2].i);
+
+    scratch[1].r := epi3.i * (scratch[1].i - scratch[2].i);
+    scratch[1].i := -epi3.i * (scratch[1].r - scratch[2].r);
+
+    C_ADDTO(scratch[1], scratch[0]);
+    Fout[Fout1] := scratch[1];
+
+    scratch[2] := scratch[1];
+    scratch[2].r := scratch[0].r - scratch[1].r;
+    scratch[2].i := scratch[0].i - scratch[1].i;
+    
+    Fout[Fout2] := scratch[2];
+  end;
+end;
+
+{ Butterfly radix-4 }
+procedure kf_bfly4(var Fout: Tkiss_fft_cpx_array; fstride: Integer;
+  const st: kiss_fft_cfg; m: Integer);
+var
+  Fout0, Fout1, Fout2, Fout3: Integer;
+  scratch: array[0..5] of kiss_fft_cpx;
+  k: Integer;
+begin
+  for k := 0 to m - 1 do
+  begin
+    Fout0 := k;
+    Fout1 := k + m;
+    Fout2 := k + 2 * m;
+    Fout3 := k + 3 * m;
+
+    scratch[0] := Fout[Fout0];
+    scratch[1] := Fout[Fout1];
+    scratch[2] := Fout[Fout2];
+    scratch[3] := Fout[Fout3];
+
+    C_MUL(scratch[1], scratch[1], st.twiddles[fstride * Fout1]);
+    C_MUL(scratch[2], scratch[2], st.twiddles[fstride * 2 * Fout2]);
+    C_MUL(scratch[3], scratch[3], st.twiddles[fstride * 3 * Fout3]);
+
+    scratch[4].r := scratch[0].r + scratch[2].r;
+    scratch[4].i := scratch[0].i + scratch[2].i;
+    scratch[5].r := scratch[0].r - scratch[2].r;
+    scratch[5].i := scratch[0].i - scratch[2].i;
+
+    Fout[Fout0].r := scratch[4].r + scratch[1].r + scratch[3].r;
+    Fout[Fout0].i := scratch[4].i + scratch[1].i + scratch[3].i;
+
+    scratch[5].r := scratch[5].r + (scratch[3].i - scratch[1].i);
+    scratch[5].i := scratch[5].i - (scratch[3].r - scratch[1].r);
+    Fout[Fout2].r := scratch[5].r;
+    Fout[Fout2].i := scratch[5].i;
+
+    scratch[4].r := scratch[4].r - scratch[1].r - scratch[3].r;
+    scratch[4].i := scratch[4].i - scratch[1].i - scratch[3].i;
+    
+    scratch[5].r := scratch[5].r + 2.0 * (scratch[1].i - scratch[3].i);
+    scratch[5].i := scratch[5].i + 2.0 * (scratch[3].r - scratch[1].r);
+    Fout[Fout1].r := scratch[4].r + scratch[5].i;
+    Fout[Fout1].i := scratch[4].i - scratch[5].r;
+
+    Fout[Fout3].r := scratch[4].r - scratch[5].i;
+    Fout[Fout3].i := scratch[4].i + scratch[5].r;
+  end;
+end;
+
+{ Butterfly radix-5 }
+procedure kf_bfly5(var Fout: Tkiss_fft_cpx_array; fstride: Integer;
+  const st: kiss_fft_cfg; m: Integer);
+var
+  Fout0, Fout1, Fout2, Fout3, Fout4: Integer;
+  scratch: array[0..10] of kiss_fft_cpx;
+  ya, yb: kiss_fft_cpx;
+  k: Integer;
+begin
+  ya.r := Cos(2.0 * PI / 5.0);
+  ya.i := Sin(2.0 * PI / 5.0);
+  yb.r := Cos(4.0 * PI / 5.0);
+  yb.i := Sin(4.0 * PI / 5.0);
+
+  for k := 0 to m - 1 do
+  begin
+    Fout0 := k;
+    Fout1 := k + m;
+    Fout2 := k + 2 * m;
+    Fout3 := k + 3 * m;
+    Fout4 := k + 4 * m;
+
+    scratch[0] := Fout[Fout0];
+    scratch[1] := Fout[Fout1];
+    scratch[2] := Fout[Fout2];
+    scratch[3] := Fout[Fout3];
+    scratch[4] := Fout[Fout4];
+
+    C_MUL(scratch[1], scratch[1], st.twiddles[fstride * Fout1]);
+    C_MUL(scratch[2], scratch[2], st.twiddles[fstride * 2 * Fout2]);
+    C_MUL(scratch[3], scratch[3], st.twiddles[fstride * 3 * Fout3]);
+    C_MUL(scratch[4], scratch[4], st.twiddles[fstride * 4 * Fout4]);
+
+    scratch[7].r := scratch[1].r + scratch[4].r;
+    scratch[7].i := scratch[1].i + scratch[4].i;
+    scratch[8].r := scratch[2].r + scratch[3].r;
+    scratch[8].i := scratch[2].i + scratch[3].i;
+    scratch[9].r := scratch[1].r - scratch[4].r;
+    scratch[9].i := scratch[1].i - scratch[4].i;
+    scratch[10].r := scratch[3].r - scratch[2].r;
+    scratch[10].i := scratch[3].i - scratch[2].i;
+
+    Fout[Fout0].r := scratch[0].r + scratch[7].r + scratch[8].r;
+    Fout[Fout0].i := scratch[0].i + scratch[7].i + scratch[8].i;
+
+    scratch[5].r := scratch[0].r + ya.r * scratch[7].r + yb.r * scratch[8].r;
+    scratch[5].i := scratch[0].i + ya.r * scratch[7].i + yb.r * scratch[8].i;
+    scratch[6].r := ya.i * scratch[9].r + yb.i * scratch[10].r;
+    scratch[6].i := ya.i * scratch[9].i + yb.i * scratch[10].i;
+
+    Fout[Fout1].r := scratch[5].r - scratch[6].i;
+    Fout[Fout1].i := scratch[5].i + scratch[6].r;
+    Fout[Fout4].r := scratch[5].r + scratch[6].i;
+    Fout[Fout4].i := scratch[5].i - scratch[6].r;
+
+    scratch[5].r := scratch[0].r + yb.r * scratch[7].r + ya.r * scratch[8].r;
+    scratch[5].i := scratch[0].i + yb.r * scratch[7].i + ya.r * scratch[8].i;
+    scratch[6].r := yb.i * scratch[9].r - ya.i * scratch[10].r;
+    scratch[6].i := yb.i * scratch[9].i - ya.i * scratch[10].i;
+
+    Fout[Fout2].r := scratch[5].r + scratch[6].i;
+    Fout[Fout2].i := scratch[5].i - scratch[6].r;
+    Fout[Fout3].r := scratch[5].r - scratch[6].i;
+    Fout[Fout3].i := scratch[5].i + scratch[6].r;
+  end;
+end;
+
+{ Generic butterfly para radix > 5 }
+procedure kf_bfly_generic(var Fout: Tkiss_fft_cpx_array; fstride: Integer;
+  const st: kiss_fft_cfg; m, p: Integer);
+var
+  u, k, q1, q: Integer;
+  twidx: Integer;
+  Norig: Integer;
+  scratch: TArray<kiss_fft_cpx>;
+  t: kiss_fft_cpx;
+begin
+  Norig := st.nfft;
+  SetLength(scratch, p);
+
+  for u := 0 to m - 1 do
+  begin
+    k := u;
+    for q1 := 0 to p - 1 do
+    begin
+      scratch[q1] := Fout[k];
+      k := k + m;
+    end;
+
+    k := u;
+    for q1 := 0 to p - 1 do
+    begin
+      twidx := 0;
+      Fout[k] := scratch[0];
+      for q := 1 to p - 1 do
+      begin
+        twidx := twidx + fstride * k;
+        if twidx >= Norig then
+          twidx := twidx - Norig;
+        C_MUL(t, scratch[q], st.twiddles[twidx]);
+        C_ADDTO(Fout[k], t);
+      end;
+      k := k + m;
+    end;
+  end;
+
+  SetLength(scratch, 0);
+end;
+
+{ Función para factorizar }
+procedure kf_factor(n: Integer; var factors: TArray<Integer>);
+var
+  p: Integer;
+  nfact: Integer;
+  factor_idx: Integer;
+begin
+  SetLength(factors, 32);
+  nfact := 0;
+  p := 4;
+
+  repeat
+    while (n mod p) <> 0 do
+    begin
+      if p = 4 then
+        p := 2
+      else if p = 2 then
+        p := 3
+      else
+        p := p + 2;
+      
+      if p * p > n then
+      begin
+        p := n;
+        Break;
+      end;
+    end;
+
+    n := n div p;
+    factors[2 * nfact] := p;
+    factors[2 * nfact + 1] := n;
+    Inc(nfact);
+
+  until n = 1;
+
+  SetLength(factors, 2 * nfact + 2);
+  factors[2 * nfact] := 0;
+end;
+
+{ Main work function }
+procedure kf_work(var Fout: Tkiss_fft_cpx_array; const f: Tkiss_fft_cpx_array;
+  fstride, in_stride: Integer; const factors: TArray<Integer>; 
+  const st: kiss_fft_cfg; factor_idx: Integer);
+var
+  p, m: Integer;
+  Fout_beg, Fout_end: Integer;
+  k: Integer;
+  f_idx: Integer;
+begin
+  p := factors[factor_idx];
+  m := factors[factor_idx + 1];
+  Fout_beg := 0;
+  Fout_end := p * m;
+
+  if m = 1 then
+  begin
+    for k := 0 to p - 1 do
+    begin
+      Fout[k] := f[k * fstride * in_stride];
+    end;
+  end
+  else
+  begin
+    for k := 0 to p - 1 do
+    begin
+      kf_work(Fout, f, fstride * p, in_stride, factors, st, factor_idx + 2);
+    end;
+  end;
+
+  case p of
+    2: kf_bfly2(Fout, fstride, st, m);
+    3: kf_bfly3(Fout, fstride, st, m);
+    4: kf_bfly4(Fout, fstride, st, m);
+    5: kf_bfly5(Fout, fstride, st, m);
+  else
+    kf_bfly_generic(Fout, fstride, st, m, p);
+  end;
+end;
+
+function kiss_fft_alloc(nfft: Integer; inverse_fft: Boolean): kiss_fft_cfg;
+var
+  i: Integer;
+  phase: Double;
+begin
+  Result.nfft := nfft;
+  Result.inverse := inverse_fft;
+  
+  SetLength(Result.twiddles, nfft);
+  for i := 0 to nfft - 1 do
+  begin
+    phase := -2.0 * PI * i / nfft;
+    if inverse_fft then
+      phase := -phase;
+    Result.twiddles[i].r := Cos(phase);
+    Result.twiddles[i].i := Sin(phase);
+  end;
+
+  kf_factor(nfft, Result.factors);
+end;
+
+procedure kiss_fft(cfg: kiss_fft_cfg; const fin: Tkiss_fft_cpx_array; var fout: Tkiss_fft_cpx_array);
+var
+  i: Integer;
+  scale: Double;
+begin
+  SetLength(fout, cfg.nfft);	
+
+  Move(fin[0], fout[0], cfg.nfft * SizeOf(kiss_fft_cpx));  
+
+  // Copiar entrada a salida
+  if Length(cfg.factors) > 0 then
+  begin
+    kf_work(fout, fin, 1, 1, cfg.factors, cfg, 0);
+  end;
+
+  { Si es inversa, escalar por 1/nfft }
+  if cfg.inverse then
+  begin
+    scale := 1.0 / cfg.nfft;
+    for i := 0 to cfg.nfft - 1 do
+    begin
+      fout[i].r := fout[i].r * scale;
+      fout[i].i := fout[i].i * scale;
+    end;
+  end;
+end;
+
+function kiss_fftr_alloc(nfft: Integer; inverse_fft: Boolean): kiss_fftr_cfg;
+var
+  i: Integer;
+  phase: Double;
+  half_n: Integer;
+begin
+  half_n := nfft div 2;
+  Result.substate := kiss_fft_alloc(half_n, inverse_fft);
+  SetLength(Result.tmpbuf, half_n);
+  SetLength(Result.super_twiddles, half_n div 2);
+  
+  for i := 0 to (half_n div 2) - 1 do
+  begin
+    phase := -PI * ((i + 1) / half_n + 0.5);
+    if inverse_fft then
+      phase := -phase;
+    Result.super_twiddles[i].r := Cos(phase);
+    Result.super_twiddles[i].i := Sin(phase);
+  end;
+end;
+
+procedure kiss_fftr(var cfg: kiss_fftr_cfg; const timedata: TArray<kiss_fft_scalar>; 
+  var freqdata: Tkiss_fft_cpx_array);
+var
+  ncfft, k: Integer;
+  fpnk, fpk, f1k, f2k, tw: kiss_fft_cpx;
+  tmp: Tkiss_fft_cpx_array;
+begin
+  ncfft := cfg.substate.nfft;
+  SetLength(freqdata, ncfft + 1);
+  SetLength(tmp, ncfft);
+
+  { Pack two real signals into complex }
+  for k := 0 to ncfft - 1 do
+  begin
+    if 2 * k + 1 < Length(timedata) then
+    begin
+      tmp[k].r := timedata[2 * k];
+      tmp[k].i := timedata[2 * k + 1];
+    end
+    else if 2 * k < Length(timedata) then
+    begin
+      tmp[k].r := timedata[2 * k];
+      tmp[k].i := 0;
+    end;
+  end;
+
+  { Perform FFT }
+  kiss_fft(cfg.substate, tmp, cfg.tmpbuf);
+
+  { DC component }
+  freqdata[0].r := cfg.tmpbuf[0].r + cfg.tmpbuf[0].i;
+  freqdata[0].i := 0;
+
+  { Nyquist component }
+  if ncfft > 0 then
+  begin
+    freqdata[ncfft].r := cfg.tmpbuf[0].r - cfg.tmpbuf[0].i;
+    freqdata[ncfft].i := 0;
+  end;
+
+  { Rest of frequencies }
+  for k := 1 to ncfft div 2 do
+  begin
+    fpk := cfg.tmpbuf[k];
+    fpnk.r := cfg.tmpbuf[ncfft - k].r;
+    fpnk.i := -cfg.tmpbuf[ncfft - k].i;
+
+    f1k.r := (fpk.r + fpnk.r) * 0.5;
+    f1k.i := (fpk.i + fpnk.i) * 0.5;
+    f2k.r := (fpk.r - fpnk.r) * 0.5;
+    f2k.i := (fpk.i - fpnk.i) * 0.5;
+
+    C_MUL(tw, f2k, cfg.super_twiddles[k - 1]);
+
+    freqdata[k].r := f1k.r + tw.r;
+    freqdata[k].i := f1k.i + tw.i;
+
+    if ncfft - k >= 0 then
+    begin
+      freqdata[ncfft - k].r := f1k.r - tw.r;
+      freqdata[ncfft - k].i := tw.i - f1k.i;
+    end;
+  end;
+end;
+
+procedure kiss_fftri(var cfg: kiss_fftr_cfg; const freqdata: Tkiss_fft_cpx_array; 
+  var timedata: TArray<kiss_fft_scalar>);
+var
+  ncfft, k: Integer;
+  fk, fnkc, fek, fok, tmp: kiss_fft_cpx;
+begin
+  ncfft := cfg.substate.nfft;
+  SetLength(timedata, 2 * ncfft);
+
+  cfg.tmpbuf[0].r := freqdata[0].r + freqdata[ncfft].r;
+  cfg.tmpbuf[0].i := freqdata[0].r - freqdata[ncfft].r;
+
+  for k := 1 to ncfft div 2 do
+  begin
+    fk := freqdata[k];
+    fnkc.r := freqdata[ncfft - k].r;
+    fnkc.i := -freqdata[ncfft - k].i;
+
+    fek.r := (fk.r + fnkc.r) * 0.5;
+    fek.i := (fk.i + fnkc.i) * 0.5;
+    tmp.r := (fk.r - fnkc.r) * 0.5;
+    tmp.i := (fk.i - fnkc.i) * 0.5;
+
+    C_MUL(fok, tmp, cfg.super_twiddles[k - 1]);
+
+    cfg.tmpbuf[k].r := fek.r + fok.r;
+    cfg.tmpbuf[k].i := fek.i + fok.i;
+    cfg.tmpbuf[ncfft - k].r := fek.r - fok.r;
+    cfg.tmpbuf[ncfft - k].i := -(fek.i - fok.i);
+  end;
+
+  { Perform inverse FFT }
+  kiss_fft(cfg.substate, cfg.tmpbuf, cfg.tmpbuf);
+
+  { Unpack }
+  for k := 0 to ncfft - 1 do
+  begin
+    timedata[2 * k] := cfg.tmpbuf[k].r;
+    timedata[2 * k + 1] := cfg.tmpbuf[k].i;
+  end;
+end;
+
+end.

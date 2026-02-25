@@ -1,0 +1,19 @@
+program analyze;
+
+uses
+  Vcl.Forms,
+  unit1 in 'unit1.pas' {Form10},
+  BassAudioProcessor in 'BassAudioProcessor.pas',
+  DetectionFunction in 'DetectionFunction.pas',
+  QMBeatAnalyzer in 'QMBeatAnalyzer.pas',
+  TempoTrackV2 in 'TempoTrackV2.pas',
+  KissFFT in 'KissFFT.pas';
+
+{$R *.res}
+
+begin
+  Application.Initialize;
+  Application.MainFormOnTaskbar := True;
+  Application.CreateForm(TForm10, Form10);
+  Application.Run;
+end.
