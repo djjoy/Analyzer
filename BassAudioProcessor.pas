@@ -176,7 +176,7 @@ begin
 
   bass_channelgetinfo(m_stream, info);
   songsamplerate := info.freq;
-  Result := m_analyzer.Initialize(44100);
+  Result := m_analyzer.Initialize(songsamplerate);
 end;
 
 function TBassAudioProcessor.CloseMp3File: Boolean;
@@ -241,22 +241,8 @@ begin
 end;
 
 function TBassAudioProcessor.GetBPM: Double;
-var
-  beats: TArray<Double>;
-  avgBeatInterval: Double;
 begin
-  beats := m_analyzer.GetBeats;
-  
-  Result := 0;
-  
-  if Length(beats) < 2 then
-    Exit;
-  
-  avgBeatInterval := (beats[High(beats)] - beats[0]) / (Length(beats) - 1);
-  
-  if avgBeatInterval > 0 then
-    //Result := (60.0 * m_analyzer.GetSampleRate) / avgBeatInterval;
-    Result := (60.0 * songsamplerate) / avgBeatInterval;
+  Result := m_analyzer.GetBPM;
 end;
 
 end.
