@@ -197,6 +197,7 @@ var
   i: Integer;
   totalReaded: Integer;
   total: Int64;
+  maxBytes: Int64;
 begin
   Result := False;
   totalReaded := 0;
@@ -210,6 +211,13 @@ begin
   { Allocate buffer for reading samples }
   SetLength(m_sampleBuffer, 4096 * 2); { stereo }
   total := BassChannelGetLength(m_stream, 0); { BASS_POS_BYTE = 0 }
+  
+  { Limit analysis to the first 60 seconds of audio.
+    Int64 cast on the first operand ensures the whole expression is evaluated
+    in 64-bit arithmetic: sampleRate * 2 channels * 4 bytes/sample * 60 s. }
+  maxBytes := Int64(songsamplerate) * 2 * SizeOf(Single) * 60;
+  if total > maxBytes then
+    total := maxBytes;
   
   repeat
     bytesRead := BassChannelGetData(m_stream, @m_sampleBuffer[0], SizeOf(Single) * Length(m_sampleBuffer));
