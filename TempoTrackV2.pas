@@ -382,7 +382,6 @@ var
   rcfmat: TDoubleMatrix;
   dfframe: TDoubleVector;
   rcf: TDoubleVector;
-  k, l: Integer;
   rcfmat_idx: Integer;
   j: Integer;
 begin
@@ -391,8 +390,10 @@ begin
   { Initialize weighting vector }
   SetLength(wv, WV_LEN);
   
-  { Calculate rayparam }
-  rayparam := (60.0 * 44100.0 / 512.0) / inputtempo;
+  { Calculate rayparam using the actual sample rate and DF hop size so that
+    the Rayleigh prior is centred on the correct beat-period bin regardless
+    of the file's sample rate. }
+  rayparam := (60.0 * m_rate / m_increment) / inputtempo;
   
   { Create weighting vector }
   if constraintempo then
@@ -419,29 +420,12 @@ begin
   SetLength(dfframe, winlen);
   SetLength(rcf, WV_LEN);
   
-  { Process each window }
-  i := -(winlen div 2);
-  while i < (df_len - winlen div 2) do
+  { Process each window: only fully-contained windows, no zero-padding.
+    Matches the original qm-dsp: for (i=0; i+winlen < df_len; i+=step). }
+  i := 0;
+  while i + winlen < df_len do
   begin
-    k := 0;
-    l := winlen;
-    
-    { Fill with zeros if needed }
-    if i < 0 then
-    begin
-      k := -i;
-      FillChar(dfframe[0], k * SizeOf(Double), 0);
-    end;
-    
-    if (i + l) > df_len then
-    begin
-      l := df_len - i;
-      FillChar(dfframe[l], (winlen - l) * SizeOf(Double), 0);
-    end;
-    
-    { Copy data }
-    if l > k then
-      Move(df[i + k], dfframe[k], (l - k) * SizeOf(Double));
+    Move(df[i], dfframe[0], winlen * SizeOf(Double));
     
     { Clear rcf }
     for j := 0 to WV_LEN - 1 do
@@ -456,7 +440,7 @@ begin
       rcfmat[rcfmat_idx][j] := rcf[j];
     
     Inc(rcfmat_idx);
-    i := i + hopsize;
+    Inc(i, hopsize);
   end;
   
   { Resize rcfmat to actual size }
@@ -521,13 +505,16 @@ begin
   { Main dynamic programming loop }
   for i := 0 to df_len - 1 do
   begin
-    period := beat_period[i div 128];
+    { Clamp index to last valid entry, matching the original qm-dsp behaviour of
+      replicating the last beat_period value to the end of the df array. }
+    period := beat_period[Min(i div HOPSIZE, Length(beat_period) - 1)];
     prange_min := period * -2;
     
     if period <> old_period then
     begin
       old_period := period;
-      prange_max := period div -2;
+      { Use half-away-from-zero rounding to match C++ round(-0.5*period) }
+      prange_max := -(period + 1) div 2;
       
       txwt_len := prange_max - prange_min + 1;
       SetLength(txwt, txwt_len);

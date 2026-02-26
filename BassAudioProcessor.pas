@@ -69,6 +69,7 @@ type
     function AnalyzeMp3: Boolean;
     function GetDetectedBeats: TArray<Double>;
     function GetBPM: Double;
+    function GetSampleRate: integer;
   end;
 
 implementation
@@ -176,7 +177,7 @@ begin
 
   bass_channelgetinfo(m_stream, info);
   songsamplerate := info.freq;
-  Result := m_analyzer.Initialize(44100);
+  Result := m_analyzer.Initialize(songsamplerate);
 end;
 
 function TBassAudioProcessor.CloseMp3File: Boolean;
@@ -197,6 +198,7 @@ var
   i: Integer;
   totalReaded: Integer;
   total: Int64;
+  maxBytes: Int64;
 begin
   Result := False;
   totalReaded := 0;
@@ -211,12 +213,22 @@ begin
   SetLength(m_sampleBuffer, 4096 * 2); { stereo }
   total := BassChannelGetLength(m_stream, 0); { BASS_POS_BYTE = 0 }
   
+  { Limit analysis to the first 60 seconds of audio.
+    Int64 cast on the first operand ensures the whole expression is evaluated
+    in 64-bit arithmetic: sampleRate * 2 channels * 4 bytes/sample * 60 s. }
+  //maxBytes := Int64(songsamplerate) * 2 * SizeOf(Single) * 60;
+  //if total > maxBytes then
+  //  total := maxBytes;
+  
   repeat
     bytesRead := BassChannelGetData(m_stream, @m_sampleBuffer[0], SizeOf(Single) * Length(m_sampleBuffer));
-    totalReaded := totalReaded + bytesRead;
 
-    if bytesRead = 0 then
+    { BASS returns High(DWORD) = $FFFFFFFF on error (equivalent to -1 cast to DWORD).
+      Treat both end-of-stream (0) and error as a signal to stop reading. }
+    if (bytesRead = 0) or (bytesRead = High(DWORD)) then
       Break;
+
+    totalReaded := totalReaded + bytesRead;
 
     sampleCount := bytesRead div SizeOf(Single);
     
@@ -241,22 +253,13 @@ begin
 end;
 
 function TBassAudioProcessor.GetBPM: Double;
-var
-  beats: TArray<Double>;
-  avgBeatInterval: Double;
 begin
-  beats := m_analyzer.GetBeats;
-  
-  Result := 0;
-  
-  if Length(beats) < 2 then
-    Exit;
-  
-  avgBeatInterval := (beats[High(beats)] - beats[0]) / (Length(beats) - 1);
-  
-  if avgBeatInterval > 0 then
-    //Result := (60.0 * m_analyzer.GetSampleRate) / avgBeatInterval;
-    Result := (60.0 * songsamplerate) / avgBeatInterval;
+  Result := m_analyzer.GetBPM;
+end;
+
+function TBassAudioProcessor.GetSampleRate: Integer;
+begin
+  Result := SongSampleRate;
 end;
 
 end.

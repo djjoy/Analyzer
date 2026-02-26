@@ -1,14 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <BorlandProject>
-  <Transactions>
-    <Transaction>2026/02/23 10:26:51.367,=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.pas</Transaction>
-    <Transaction>2026/02/23 10:27:29.654,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\unit1.pas=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.pas</Transaction>
-    <Transaction>2026/02/23 10:27:29.654,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\unit1.dfm=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.dfm</Transaction>
-    <Transaction>2026/02/23 10:27:39.121,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\analyze.dproj=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Project7.dproj</Transaction>
-    <Transaction>2026/02/23 10:28:50.459,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\BassAudioProcessor.pas</Transaction>
-    <Transaction>2026/02/23 10:28:50.545,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\DetectionFunction.pas</Transaction>
-    <Transaction>2026/02/23 10:28:50.653,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\QMBeatAnalyzer.pas</Transaction>
-    <Transaction>2026/02/23 10:28:50.722,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\TempoTrackV2.pas</Transaction>
-    <Transaction>2026/02/23 15:32:59.773,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\KissFFT.pas</Transaction>
+	<Transactions>
+    <Transaction>2026/02/23 10:26:51.000.367,=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.pas</Transaction>
+    <Transaction>2026/02/23 10:27:29.000.654,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\unit1.pas=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.pas</Transaction>
+    <Transaction>2026/02/23 10:27:29.000.654,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\unit1.dfm=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Unit10.dfm</Transaction>
+    <Transaction>2026/02/23 10:27:39.000.121,F:\OneDrive\Programacion\Proyectos\2026\Analyzer\analyze.dproj=F:\OneDrive\Documentos\Embarcadero\Studio\Projects\Project7.dproj</Transaction>
+    <Transaction>2026/02/23 10:28:50.000.545,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\DetectionFunction.pas</Transaction>
+    <Transaction>2026/02/23 10:28:50.000.459,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\BassAudioProcessor.pas</Transaction>
+    <Transaction>2026/02/23 10:28:50.000.722,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\TempoTrackV2.pas</Transaction>
+    <Transaction>2026/02/23 10:28:50.000.653,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\QMBeatAnalyzer.pas</Transaction>
+    <Transaction>2026/02/23 15:32:59.000.773,=F:\OneDrive\Programacion\Proyectos\2026\Analyzer\KissFFT.pas</Transaction>
   </Transactions>
 </BorlandProject>

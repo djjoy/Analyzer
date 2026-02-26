@@ -107,7 +107,11 @@ begin
   m_tempoTracker := TTempoTrackV2.Create(m_sampleRate, m_stepSizeFrames);
   
   SetLength(m_windowBuffer, m_windowSize);
-  m_windowFillCount := 0;
+  { Start with the first half of the window pre-filled with zeros, matching
+    Mixxx's DownmixAndOverlapHelper which sets m_bufferWritePosition = windowSize/2.
+    This centres the first analysis frame at the beginning of the track.
+    Note: SetLength zero-initialises new memory in Delphi, so no explicit fill needed. }
+  m_windowFillCount := m_windowSize div 2;
   
   Result := True;
 end;
@@ -140,9 +144,12 @@ begin
   sampleIdx := 0;
   for i := 0 to (iLen div kAnalysisChannels) - 1 do
   begin
-    { Average stereo channels }
-    m_windowBuffer[m_windowFillCount] := 
-      (pIn[sampleIdx] + pIn[sampleIdx + 1]) / 2.0;
+    { Average stereo channels in Double precision.
+      Audio samples arrive as Single from BASS; promoting to Double before
+      the addition ensures the average is computed without Single-precision
+      rounding, consistent with the Double-precision analysis pipeline. }
+    m_windowBuffer[m_windowFillCount] :=
+      (Double(pIn[sampleIdx]) + Double(pIn[sampleIdx + 1])) * 0.5;
     Inc(m_windowFillCount);
     Inc(sampleIdx, 2);
     
@@ -169,11 +176,21 @@ var
   beatPeriod: TArray<Integer>;
   beats: TArray<Double>;
   beatFrame: Double;
-  beatPeriodSamples: Integer;
-  hopIdx: Integer;
+  halfStep: Double;
+  zeroBuf: TArray<Single>;
 begin
   Result := False;
-  
+
+  { Append windowSize/2 silence frames before finalising, matching
+    Mixxx's DownmixAndOverlapHelper::finalize() which appends
+    max(framesToFillWindow, windowSize/2 - 1) zero frames. This flushes
+    any partially-filled window and captures beats near the end of the track.
+    ProcessSamples expects stereo-interleaved samples, so m_windowSize
+    samples = m_windowSize div 2 mono frames = m_windowSize div 2 silence. }
+  SetLength(zeroBuf, m_windowSize);
+  ProcessSamples(zeroBuf, m_windowSize);
+  SetLength(zeroBuf, 0);
+
   { Find last non-zero detection result }
   nonZeroCount := m_detectionResults.Count;
   while (nonZeroCount > 0) and (m_detectionResults[nonZeroCount - 1] <= 0.0) do
@@ -195,14 +212,14 @@ begin
   SetLength(beats, 0);
   m_tempoTracker.CalculateBeats(df, beatPeriod, beats);
   
-  { Convert beat positions from df increment units to audio frames
-    beats contains indices en el array de DF
-    Cada índice en DF corresponde a m_stepSizeFrames muestras de audio }
+  { Convert beat DF indices to audio frame positions.
+    Add m_stepSizeFrames/2: beat is detected between surrounding analysis
+    frames, matching Mixxx: (beats[i] * m_stepSizeFrames) + m_stepSizeFrames/2. }
+  halfStep := m_stepSizeFrames / 2;
   m_resultBeats.Clear;
   for i := 0 to Length(beats) - 1 do
   begin
-    { Convertir índice DF a frames de audio }
-    beatFrame := beats[i] * m_stepSizeFrames;
+    beatFrame := beats[i] * m_stepSizeFrames + halfStep;
     m_resultBeats.Add(beatFrame);
   end;
   
