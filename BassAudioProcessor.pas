@@ -213,10 +213,13 @@ begin
   
   repeat
     bytesRead := BassChannelGetData(m_stream, @m_sampleBuffer[0], SizeOf(Single) * Length(m_sampleBuffer));
-    totalReaded := totalReaded + bytesRead;
 
-    if bytesRead = 0 then
+    { BASS returns High(DWORD) = $FFFFFFFF on error (equivalent to -1 cast to DWORD).
+      Treat both end-of-stream (0) and error as a signal to stop reading. }
+    if (bytesRead = 0) or (bytesRead = High(DWORD)) then
       Break;
+
+    totalReaded := totalReaded + bytesRead;
 
     sampleCount := bytesRead div SizeOf(Single);
     

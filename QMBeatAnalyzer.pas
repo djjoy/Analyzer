@@ -140,9 +140,12 @@ begin
   sampleIdx := 0;
   for i := 0 to (iLen div kAnalysisChannels) - 1 do
   begin
-    { Average stereo channels }
-    m_windowBuffer[m_windowFillCount] := 
-      (pIn[sampleIdx] + pIn[sampleIdx + 1]) / 2.0;
+    { Average stereo channels in Double precision.
+      Audio samples arrive as Single from BASS; promoting to Double before
+      the addition ensures the average is computed without Single-precision
+      rounding, consistent with the Double-precision analysis pipeline. }
+    m_windowBuffer[m_windowFillCount] :=
+      (Double(pIn[sampleIdx]) + Double(pIn[sampleIdx + 1])) * 0.5;
     Inc(m_windowFillCount);
     Inc(sampleIdx, 2);
     
