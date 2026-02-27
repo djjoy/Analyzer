@@ -334,9 +334,12 @@ begin
   centerBpm := (60.0 * m_sampleRate) / avgBeatInterval;
 
   { Tolerancia de 25 ms convertida a BPM (igual que Mixxx kMaxSecsPhaseError).
-    Derivación: dBPM = BPM² × kMaxSecsPhaseError / 60
-    Ej: 120 BPM → ±0.6 BPM; 140 BPM → ±0.8 BPM }
-  tolerance := centerBpm * centerBpm * 0.025 / 60.0;
+    Fórmula de Mixxx: dBeatLength = kMaxSecsPhaseError * sr / numberOfBeats
+    Convertido a BPM: tolerance = BPM² × 0.025 / (60 × numberOfBeats)
+    Para ~128 beats analizados y 128.7 BPM → ±0.054 BPM
+    Para ~140 beats analizados y 140.8 BPM → ±0.059 BPM
+    Con este margen, 128.7 NO se redondea a 129, ni 140.8 a 141. }
+  tolerance := centerBpm * centerBpm * 0.025 / (60.0 * (Length(beats) - 1));
 
   Result := RoundBpmWithinRange(centerBpm - tolerance, centerBpm, centerBpm + tolerance);
 end;
