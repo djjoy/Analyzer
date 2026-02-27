@@ -7,6 +7,7 @@ uses
   DetectionFunction, TempoTrackV2;
 
 type
+type
   TQMBeatAnalyzer = class
   private
     m_pDetectionFunction: TDetectionFunction;
@@ -20,6 +21,10 @@ type
     m_windowFillCount: Integer;
     
     procedure ProcessWindow(const pWindow: TArray<Double>);
+    { Redondea el BPM al valor más preciso dentro del rango de tolerancia,
+      igual que BeatUtils::roundBpmWithinRange de Mixxx.
+      Intenta: entero, 0.5, 1/3 y 1/12 de BPM en ese orden. }
+    function RoundBpmWithinRange(minBpm, centerBpm, maxBpm: Double): Double;
   public
     constructor Create;
     destructor Destroy; override;
@@ -235,10 +240,79 @@ begin
     Result[i] := m_resultBeats[i];
 end;
 
+{ Intenta redondear BPM a un múltiplo de 1/fraction dentro del rango [minBpm, maxBpm].
+  Equivale a BeatUtils::trySnap de Mixxx. }
+function TrySnap(minBpm, centerBpm, maxBpm, fraction: Double): Double;
+var
+  snapped: Double;
+begin
+  snapped := Round(centerBpm * fraction) / fraction;
+  if (snapped > minBpm) and (snapped < maxBpm) then
+    Result := snapped
+  else
+    Result := 0.0; { 0 = no encontrado }
+end;
+
+function TQMBeatAnalyzer.RoundBpmWithinRange(minBpm, centerBpm, maxBpm: Double): Double;
+var
+  snapped: Double;
+begin
+  { 1. Intentar BPM entero }
+  snapped := TrySnap(minBpm, centerBpm, maxBpm, 1.0);
+  if snapped > 0 then
+  begin
+    Result := snapped;
+    Exit;
+  end;
+
+  { 2. Intentar 0.5 BPM solo para tempos lentos (<85 BPM) }
+  if centerBpm < 85.0 then
+  begin
+    snapped := TrySnap(minBpm, centerBpm, maxBpm, 2.0);
+    if snapped > 0 then
+    begin
+      Result := snapped;
+      Exit;
+    end;
+  end;
+
+  { 3. Para tempos rápidos (>127 BPM) intentar múltiplo de 2/3 }
+  if centerBpm > 127.0 then
+  begin
+    snapped := TrySnap(minBpm, centerBpm, maxBpm, 2.0 / 3.0);
+    if snapped > 0 then
+    begin
+      Result := snapped;
+      Exit;
+    end;
+  end;
+
+  { 4. Intentar 1/3 BPM }
+  snapped := TrySnap(minBpm, centerBpm, maxBpm, 3.0);
+  if snapped > 0 then
+  begin
+    Result := snapped;
+    Exit;
+  end;
+
+  { 5. Intentar 1/12 BPM }
+  snapped := TrySnap(minBpm, centerBpm, maxBpm, 12.0);
+  if snapped > 0 then
+  begin
+    Result := snapped;
+    Exit;
+  end;
+
+  { Sin redondeo posible: devolver el valor central }
+  Result := centerBpm;
+end;
+
 function TQMBeatAnalyzer.GetBPM: Double;
 var
   beats: TArray<Double>;
   avgBeatInterval: Double;
+  centerBpm: Double;
+  tolerance: Double;
 begin
   beats := GetBeats;
 
@@ -247,11 +321,24 @@ begin
   if Length(beats) < 2 then
     Exit;
 
-  { Intervalo promedio entre beats en frames de audio (span total) }
+  { Intervalo promedio entre beats en frames de audio (span total).
+    Usar el span completo (primer beat al último) en lugar de un
+    promedio frame-by-frame da una estimación más precisa porque
+    los errores de posición individuales (±12 ms por el step del DF)
+    se promedian sobre todos los intervalos. }
   avgBeatInterval := (beats[High(beats)] - beats[0]) / (Length(beats) - 1);
 
-  if avgBeatInterval > 0 then
-    Result := (60.0 * m_sampleRate) / avgBeatInterval;
+  if avgBeatInterval <= 0 then
+    Exit;
+
+  centerBpm := (60.0 * m_sampleRate) / avgBeatInterval;
+
+  { Tolerancia de 25 ms convertida a BPM (igual que Mixxx kMaxSecsPhaseError).
+    Derivación: dBPM = BPM² × kMaxSecsPhaseError / 60
+    Ej: 120 BPM → ±0.6 BPM; 140 BPM → ±0.8 BPM }
+  tolerance := centerBpm * centerBpm * 0.025 / 60.0;
+
+  Result := RoundBpmWithinRange(centerBpm - tolerance, centerBpm, centerBpm + tolerance);
 end;
 
 function TQMBeatAnalyzer.GetSampleRate: Integer;
