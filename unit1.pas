@@ -31,7 +31,9 @@ var
   processor: TBassAudioProcessor;
   beats: TArray<Double>;
   bpm: Double;
+  freq: integer;
   fichero: string;
+  sp: integer;
 begin
   if Op1.Execute then
   begin
@@ -48,8 +50,9 @@ begin
         begin
           beats := processor.GetDetectedBeats;
           bpm := processor.GetBPM;
+          sp := processor.GetSampleRate;
           labelbpm.caption :=  formatfloat('000.000', bpm);
-          memo1.Lines.Add(  formatfloat('000.000', bpm) + '   ' + extractfilename(fichero)  )
+          memo1.Lines.Add(  formatfloat('000.000', bpm) + '   ' + inttostr(sp) + '    ' + extractfilename(fichero)  )
           // Usar beats y bpm...
         end;
         processor.CloseMp3File;

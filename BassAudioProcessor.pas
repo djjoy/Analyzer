@@ -69,6 +69,7 @@ type
     function AnalyzeMp3: Boolean;
     function GetDetectedBeats: TArray<Double>;
     function GetBPM: Double;
+    function GetSampleRate: integer;
   end;
 
 implementation
@@ -215,9 +216,9 @@ begin
   { Limit analysis to the first 60 seconds of audio.
     Int64 cast on the first operand ensures the whole expression is evaluated
     in 64-bit arithmetic: sampleRate * 2 channels * 4 bytes/sample * 60 s. }
-  maxBytes := Int64(songsamplerate) * 2 * SizeOf(Single) * 60;
-  if total > maxBytes then
-    total := maxBytes;
+  //maxBytes := Int64(songsamplerate) * 2 * SizeOf(Single) * 60;
+  //if total > maxBytes then
+  //  total := maxBytes;
   
   repeat
     bytesRead := BassChannelGetData(m_stream, @m_sampleBuffer[0], SizeOf(Single) * Length(m_sampleBuffer));
@@ -254,6 +255,11 @@ end;
 function TBassAudioProcessor.GetBPM: Double;
 begin
   Result := m_analyzer.GetBPM;
+end;
+
+function TBassAudioProcessor.GetSampleRate: Integer;
+begin
+  Result := SongSampleRate;
 end;
 
 end.
