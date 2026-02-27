@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Generics.Collections, System.Math,
-  DetectionFunction, TempoTrackV2, FMathUtilities;
+  DetectionFunction, TempoTrackV2;
 
 type
   TQMBeatAnalyzer = class
@@ -238,9 +238,7 @@ end;
 function TQMBeatAnalyzer.GetBPM: Double;
 var
   beats: TArray<Double>;
-  intervals: TArray<Double>;
-  medianInterval: Double;
-  i: Integer;
+  avgBeatInterval: Double;
 begin
   beats := GetBeats;
 
@@ -249,20 +247,11 @@ begin
   if Length(beats) < 2 then
     Exit;
 
-  { Calcular todos los intervalos individuales entre beats consecutivos }
-  SetLength(intervals, Length(beats) - 1);
-  for i := 0 to Length(beats) - 2 do
-    intervals[i] := beats[i + 1] - beats[i];
+  { Intervalo promedio entre beats en frames de audio (span total) }
+  avgBeatInterval := (beats[High(beats)] - beats[0]) / (Length(beats) - 1);
 
-  { Usar la mediana en lugar del promedio del span total.
-    La mediana es resistente a beats falsos al inicio/final y a beats
-    perdidos o duplicados aislados, dando un BPM más robusto.
-    Un beat falso al principio o al final desviaría el span total y, con ello,
-    el promedio; la mediana lo ignora automáticamente. }
-  medianInterval := MathUtilities.Median(intervals);
-
-  if medianInterval > 0 then
-    Result := (60.0 * m_sampleRate) / medianInterval;
+  if avgBeatInterval > 0 then
+    Result := (60.0 * m_sampleRate) / avgBeatInterval;
 end;
 
 function TQMBeatAnalyzer.GetSampleRate: Integer;
