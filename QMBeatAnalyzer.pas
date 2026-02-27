@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Generics.Collections, System.Math,
-  DetectionFunction, TempoTrackV2, DFProcess;
+  DetectionFunction, TempoTrackV2, FMathUtilities;
 
 type
   TQMBeatAnalyzer = class
@@ -107,7 +107,11 @@ begin
   m_tempoTracker := TTempoTrackV2.Create(m_sampleRate, m_stepSizeFrames);
   
   SetLength(m_windowBuffer, m_windowSize);
-  m_windowFillCount := 0;
+  { Start with the first half of the window pre-filled with zeros, matching
+    Mixxx's DownmixAndOverlapHelper which sets m_bufferWritePosition = windowSize/2.
+    This centres the first analysis frame at the beginning of the track.
+    Note: SetLength zero-initialises new memory in Delphi, so no explicit fill needed. }
+  m_windowFillCount := m_windowSize div 2;
   
   Result := True;
 end;
@@ -172,8 +176,20 @@ var
   beatPeriod: TArray<Integer>;
   beats: TArray<Double>;
   beatFrame: Double;
+  halfStep: Double;
+  zeroBuf: TArray<Single>;
 begin
   Result := False;
+
+  { Append windowSize/2 silence frames before finalising, matching
+    Mixxx's DownmixAndOverlapHelper::finalize() which appends
+    max(framesToFillWindow, windowSize/2 - 1) zero frames. This flushes
+    any partially-filled window and captures beats near the end of the track.
+    ProcessSamples expects stereo-interleaved samples, so m_windowSize
+    samples = m_windowSize div 2 mono frames = m_windowSize div 2 silence. }
+  SetLength(zeroBuf, m_windowSize);
+  ProcessSamples(zeroBuf, m_windowSize);
+  SetLength(zeroBuf, 0);
 
   { Find last non-zero detection result }
   nonZeroCount := m_detectionResults.Count;
@@ -187,11 +203,6 @@ begin
   SetLength(df, nonZeroCount - 2);
   for i := 2 to nonZeroCount - 1 do
     df[i - 2] := m_detectionResults[i];
-
-  { Apply signal conditioning (DFProcess from qm-dsp signalconditioning/):
-    LP filter to remove high-frequency noise, then adaptive mean subtraction
-    to normalise onset peaks across quiet and loud sections of the track. }
-  TDFProcess.Process(df);
   
   { Calculate beat period }
   SetLength(beatPeriod, 0);
@@ -201,11 +212,14 @@ begin
   SetLength(beats, 0);
   m_tempoTracker.CalculateBeats(df, beatPeriod, beats);
   
-  { Convert beat DF indices to audio frame positions }
+  { Convert beat DF indices to audio frame positions.
+    Add m_stepSizeFrames/2: beat is detected between surrounding analysis
+    frames, matching Mixxx: (beats[i] * m_stepSizeFrames) + m_stepSizeFrames/2. }
+  halfStep := m_stepSizeFrames / 2;
   m_resultBeats.Clear;
   for i := 0 to Length(beats) - 1 do
   begin
-    beatFrame := beats[i] * m_stepSizeFrames;
+    beatFrame := beats[i] * m_stepSizeFrames + halfStep;
     m_resultBeats.Add(beatFrame);
   end;
   
@@ -224,28 +238,31 @@ end;
 function TQMBeatAnalyzer.GetBPM: Double;
 var
   beats: TArray<Double>;
-  avgBeatInterval: Double;
-  bpm: Double;
+  intervals: TArray<Double>;
+  medianInterval: Double;
+  i: Integer;
 begin
   beats := GetBeats;
-  
+
   Result := 0;
-  
+
   if Length(beats) < 2 then
     Exit;
-  
-  { Calcular intervalo promedio entre beats en frames de audio }
-  avgBeatInterval := (beats[High(beats)] - beats[0]) / (Length(beats) - 1);
-  
-  { Convertir de frames a segundos }
-  if avgBeatInterval > 0 then
-  begin
-    { avgBeatInterval está en frames de audio
-       Para convertir a segundos: frames / sampleRate
-       Para convertir a BPM: (60 segundos / intervalo en segundos) }
-    bpm := (60.0 * m_sampleRate) / avgBeatInterval;
-    Result := bpm;
-  end;
+
+  { Calcular todos los intervalos individuales entre beats consecutivos }
+  SetLength(intervals, Length(beats) - 1);
+  for i := 0 to Length(beats) - 2 do
+    intervals[i] := beats[i + 1] - beats[i];
+
+  { Usar la mediana en lugar del promedio del span total.
+    La mediana es resistente a beats falsos al inicio/final y a beats
+    perdidos o duplicados aislados, dando un BPM más robusto.
+    Un beat falso al principio o al final desviaría el span total y, con ello,
+    el promedio; la mediana lo ignora automáticamente. }
+  medianInterval := MathUtilities.Median(intervals);
+
+  if medianInterval > 0 then
+    Result := (60.0 * m_sampleRate) / medianInterval;
 end;
 
 function TQMBeatAnalyzer.GetSampleRate: Integer;
